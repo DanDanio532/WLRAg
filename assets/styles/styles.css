@@ -1,3 +1,20 @@
+@media (max-width: 768px) {
+  .card, .block-input {
+    width: 95%;
+    margin: auto;
+  }
+
+  input, select, button {
+    width: 100%;
+    margin-bottom: 10px;
+  }
+
+  .nav-right {
+    display: flex;
+    flex-direction: column;
+  }
+}
+
 body {
       font-family: Arial, sans-serif;
       margin: 40px;
