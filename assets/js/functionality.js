@@ -37,7 +37,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await updateAuthUI();
 
   // react to auth changes
-  supabase.auth.onAuthStateChange(() => {
+  supabase.auth.onAuthStateChange((event, session) => {
     updateAuthUI();
   });
 

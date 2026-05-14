@@ -77,7 +77,7 @@ function renderTables(blocks, blockVarieties) {
   blocks.forEach(block => {
 
     const locationName =
-      block.location.locationName;
+      block.location?.locationName || "Unknown";
 
     if (!groupedLocations[locationName]) {
       groupedLocations[locationName] = [];

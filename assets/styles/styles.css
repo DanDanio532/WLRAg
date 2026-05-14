@@ -1,5 +1,5 @@
 /* ---------------------------
-   BASE STYLES
+   BASE
 ---------------------------- */
 body {
   font-family: Arial, sans-serif;
@@ -11,7 +11,7 @@ h1 {
 }
 
 /* ---------------------------
-   CARD / INPUT CONTAINERS
+   CARDS
 ---------------------------- */
 .card {
   padding: 10px;
@@ -47,14 +47,14 @@ h1 {
   margin: 0;
 }
 
-/* RIGHT SIDE NAV LINKS */
+/* RIGHT SIDE */
 .nav-right {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-/* NAV LINKS */
+/* LINKS */
 .nav-right a {
   padding: 8px 12px;
   border-radius: 6px;
@@ -69,23 +69,27 @@ h1 {
 }
 
 /* ---------------------------
-   AUTH SLOT (FIXES SHIFTING)
+   AUTH (NO SHIFTING VERSION)
 ---------------------------- */
 .nav-auth-slot {
-  display: grid;              /* IMPORTANT CHANGE */
-  justify-items: end;
-  align-items: center;
+  position: relative;
+  width: 90px;
+  height: 40px;
 }
 
-/* both occupy same grid cell */
+/* stacked in same position */
 #auth-link,
 #signout-link {
-  grid-area: 1 / 1;
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.15s ease;
 }
 
+/* visible state */
 #auth-link.visible,
 #signout-link.visible {
   opacity: 1;
@@ -117,16 +121,20 @@ button {
   cursor: pointer;
 }
 
-/* ---------------------------
-   HOVER BUTTON STYLE (optional consistency)
----------------------------- */
 button:hover {
   background: #52796f;
   color: white;
 }
 
 /* ---------------------------
-   MOBILE RESPONSIVE
+   STATISTICS CONTAINER
+---------------------------- */
+.statistics {
+  margin-top: 20px;
+}
+
+/* ---------------------------
+   MOBILE
 ---------------------------- */
 @media (max-width: 768px) {
 
@@ -149,6 +157,6 @@ button:hover {
   }
 
   .nav-auth-slot {
-    width: auto;
+    width: 90px;
   }
 }

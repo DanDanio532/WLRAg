@@ -1,10 +1,22 @@
 import { supabase } from "./supabaseClient.js";
 
 /* ---------------------------
-   LOAD LOCATIONS (OUTSIDE FORM)
+   SAFE HELPERS
+---------------------------- */
+function getEl(id) {
+  return document.getElementById(id);
+}
+
+function safeNumber(value) {
+  return Number(value) || 0;
+}
+
+/* ---------------------------
+   LOAD LOCATIONS
 ---------------------------- */
 async function loadLocations() {
-  const locationSelect = document.getElementById("locationSelect");
+  const locationSelect = getEl("locationSelect");
+  if (!locationSelect) return;
 
   const { data, error } = await supabase
     .from("location")
@@ -23,17 +35,21 @@ async function loadLocations() {
   });
 }
 
+/* ---------------------------
+   LOAD BLOCKS
+---------------------------- */
 async function loadBlocks() {
-  const blockSelect = document.getElementById("blockSelect");
+  const blockSelect = getEl("blockSelect");
+  if (!blockSelect) return;
 
   const { data, error } = await supabase
     .from("block")
     .select(`
-        *,
-        location (
-            locationName
-        )
-        `);
+      *,
+      location (
+        locationName
+      )
+    `);
 
   if (error) {
     console.error(error);
@@ -46,15 +62,23 @@ async function loadBlocks() {
     const option = document.createElement("option");
 
     option.value = block.blockID;
+
+    const locationName =
+      block.location?.locationName || "Unknown";
+
     option.textContent =
-        `${block.location.locationName} - ${block.identifier}`;
+      `${locationName} - ${block.identifier}`;
 
     blockSelect.appendChild(option);
   });
 }
 
+/* ---------------------------
+   LOAD VARIETIES
+---------------------------- */
 async function loadVarieties() {
-  const varietySelect = document.getElementById("varietySelect");
+  const varietySelect = getEl("varietySelect");
+  if (!varietySelect) return;
 
   const { data, error } = await supabase
     .from("variety")
@@ -69,44 +93,82 @@ async function loadVarieties() {
 
   data.forEach(variety => {
     const option = document.createElement("option");
-
     option.value = variety.varietyID;
     option.textContent = variety.varietyName;
-
     varietySelect.appendChild(option);
   });
 }
 
-async function assignVariety(e) {
-  e.preventDefault();
+/* ---------------------------
+   UPDATE REMAINING TREES
+---------------------------- */
+async function updateRemainingTrees() {
+  const blockID = getEl("blockSelect")?.value;
+  if (!blockID) return;
 
-  const blockID = Number(
-    document.getElementById("blockSelect").value
-  );
+  const { data: blockData, error: blockError } =
+    await supabase
+      .from("block")
+      .select("treeCount")
+      .eq("blockID", blockID)
+      .single();
 
-  const varietyID = Number(
-    document.getElementById("varietySelect").value
-  );
-
-  const treeCount = Number(
-    document.getElementById("varietyTreeCount").value
-  );
-
-  // CHECK MAX TREES
-  const maxTrees =
-    Number(
-      document.getElementById(
-        "varietyTreeCount"
-      ).max
-    );
-
-  if (treeCount > maxTrees) {
-    alert("Too many trees for this block");
+  if (blockError) {
+    console.error(blockError);
     return;
   }
 
+  const { data: varietyData, error: varietyError } =
+    await supabase
+      .from("block_varieties")
+      .select("varietyCount")
+      .eq("blockID", blockID);
+
+  if (varietyError) {
+    console.error(varietyError);
+    return;
+  }
+
+  let usedTrees = 0;
+
+  (varietyData || []).forEach(v => {
+    usedTrees += safeNumber(v.varietyCount);
+  });
+
+  const remainingTrees =
+    safeNumber(blockData.treeCount) - usedTrees;
+
+  const remainingText = getEl("remainingTreesText");
+  if (remainingText) {
+    remainingText.textContent =
+      `Remaining Trees: ${remainingTrees}`;
+  }
+
+  const input = getEl("varietyTreeCount");
+  if (input) {
+    input.max = remainingTrees;
+  }
+}
+
+/* ---------------------------
+   ASSIGN VARIETY
+---------------------------- */
+async function assignVariety(e) {
+  e.preventDefault();
+
+  const blockID = safeNumber(getEl("blockSelect")?.value);
+  const varietyID = safeNumber(getEl("varietySelect")?.value);
+  const treeCount = safeNumber(getEl("varietyTreeCount")?.value);
+
+  const maxTrees = safeNumber(getEl("varietyTreeCount")?.max);
+
   if (!blockID || !varietyID || !treeCount) {
     alert("Please fill in all fields");
+    return;
+  }
+
+  if (treeCount > maxTrees) {
+    alert("Too many trees for this block");
     return;
   }
 
@@ -130,130 +192,58 @@ async function assignVariety(e) {
   updateRemainingTrees();
 }
 
-async function updateRemainingTrees() {
+/* ---------------------------
+   CREATE BLOCK
+---------------------------- */
+async function createBlock(e) {
+  e.preventDefault();
 
-  const blockID =
-    document.getElementById("blockSelect").value;
+  const identifier = getEl("identifier")?.value;
+  const treeCount = safeNumber(getEl("treeCount")?.value);
+  const locationID = safeNumber(getEl("locationSelect")?.value);
 
-  // TOTAL TREES IN BLOCK
-  const { data: blockData, error: blockError } =
-    await supabase
-      .from("block")
-      .select("treeCount")
-      .eq("blockID", blockID)
-      .single();
+  const { error } = await supabase
+    .from("block")
+    .insert([
+      {
+        identifier,
+        treeCount,
+        locationID
+      }
+    ]);
 
-  if (blockError) {
-    console.error(blockError);
+  if (error) {
+    console.error(error);
     return;
   }
 
-  // TREES ALREADY USED BY VARIETIES
-  const { data: varietyData, error: varietyError } =
-    await supabase
-      .from("block_varieties")
-      .select("varietyCount")
-      .eq("blockID", blockID);
+  console.log("Block created");
 
-  if (varietyError) {
-    console.error(varietyError);
-    return;
-  }
-
-  let usedTrees = 0;
-
-  varietyData.forEach(v => {
-    usedTrees += Number(v.varietyCount);
-  });
-
-  const remainingTrees =
-    Number(blockData.treeCount) - usedTrees;
-
-  // SHOW REMAINING
-  document.getElementById(
-    "remainingTreesText"
-  ).textContent =
-    `Remaining Trees: ${remainingTrees}`;
-
-  // LIMIT INPUT
-  document.getElementById(
-    "varietyTreeCount"
-  ).max = remainingTrees;
+  await loadBlocks();
+  updateRemainingTrees();
 }
 
-
 /* ---------------------------
-   MAIN
+   INIT
 ---------------------------- */
 document.addEventListener("DOMContentLoaded", async () => {
+  // SAFE PAGE GUARD
+  if (!document.getElementById("block-form")) return;
 
-  // LOAD DROPDOWNS
   await loadLocations();
   await loadBlocks();
   await loadVarieties();
 
-  // NOW update remaining trees
   updateRemainingTrees();
 
-  // UPDATE WHEN BLOCK CHANGES
-  document.getElementById("blockSelect")
-    .addEventListener(
-      "change",
-      updateRemainingTrees
-    );
-
-  /* ---------------------------
-     CREATE BLOCK FORM
-  ---------------------------- */
-  const form = document.getElementById("block-form");
-
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-
-    const identifier =
-      document.getElementById("identifier").value;
-
-    const treeCount = Number(
-    document.getElementById("treeCount").value
-    );
-
-    const locationID = Number(
-    document.getElementById("locationSelect").value
-    );
-
-    const { data, error } = await supabase
-    .from("block")
-    .insert([
-        {
-        identifier,
-        treeCount,
-        locationID
-        }
-    ])
-    .select()
-    .single();
-
-    if (error) {
-      console.error(error);
-      return;
-    }
-
-    console.log("Inserted block:", data);
-
-    await loadBlocks();
-
-    updateRemainingTrees();
-  });
-
-  /* ---------------------------
-     ASSIGN VARIETY FORM
-  ---------------------------- */
-  const assignForm =
-    document.getElementById("assign-form");
-
-  assignForm.addEventListener(
-    "submit",
-    assignVariety
+  getEl("blockSelect")?.addEventListener(
+    "change",
+    updateRemainingTrees
   );
 
+  const form = getEl("block-form");
+  form?.addEventListener("submit", createBlock);
+
+  const assignForm = getEl("assign-form");
+  assignForm?.addEventListener("submit", assignVariety);
 });
