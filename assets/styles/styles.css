@@ -1,37 +1,33 @@
-@media (max-width: 768px) {
-  .card, .block-input {
-    width: 95%;
-    margin: auto;
-  }
-
-  input, select, button {
-    width: 100%;
-    margin-bottom: 10px;
-  }
-
-  .nav-right {
-    display: flex;
-    flex-direction: column;
-  }
+/* ---------------------------
+   BASE STYLES
+---------------------------- */
+body {
+  font-family: Arial, sans-serif;
+  margin: 40px;
 }
 
-body {
-      font-family: Arial, sans-serif;
-      margin: 40px;
-    }
+h1 {
+  margin-bottom: 20px;
+}
 
-    h1 {
-      margin-bottom: 20px;
-    }
+/* ---------------------------
+   CARD / INPUT CONTAINERS
+---------------------------- */
+.card {
+  padding: 10px;
+  border: 1px solid #ddd;
+  margin-bottom: 10px;
+  border-radius: 6px;
+}
 
-    .card {
-      padding: 10px;
-      border: 1px solid #ddd;
-      margin-bottom: 10px;
-      border-radius: 6px;
-    }
+.block-input {
+  margin-top: 20px;
+}
 
-    .navbar {
+/* ---------------------------
+   NAVBAR
+---------------------------- */
+.navbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -40,36 +36,119 @@ body {
   color: white;
 }
 
-.navbar h2 {
-  margin: 0;
-}
-
-.nav-right a {
-  margin-left: 10px;
-  padding: 8px 12px;
-  border-radius: 6px;
-  text-decoration: none;
-  color: white;
-  display: inline-block;
-}
-
-.nav-right a:hover {
-  background: #52796f;
-}
-
-.nav-right button:hover {
-  background: #52796f;
-  color: white;
-}
-
+/* LEFT SIDE */
 .nav-left {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
+.navbar h2 {
+  margin: 0;
+}
+
+/* RIGHT SIDE NAV LINKS */
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* NAV LINKS */
+.nav-right a {
+  padding: 8px 12px;
+  border-radius: 6px;
+  text-decoration: none;
+  color: white;
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.nav-right a:hover {
+  background: #52796f;
+}
+
+/* ---------------------------
+   AUTH SLOT (FIXES SHIFTING)
+---------------------------- */
+.nav-auth-slot {
+  display: grid;              /* IMPORTANT CHANGE */
+  justify-items: end;
+  align-items: center;
+}
+
+/* both occupy same grid cell */
+#auth-link,
+#signout-link {
+  grid-area: 1 / 1;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+#auth-link.visible,
+#signout-link.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ---------------------------
+   LOGO
+---------------------------- */
 .logo {
   width: 32px;
   height: 32px;
   object-fit: contain;
+}
+
+/* ---------------------------
+   FORMS
+---------------------------- */
+input,
+select,
+button {
+  padding: 8px;
+  margin: 5px 0;
+  border-radius: 5px;
+  border: 1px solid #ccc;
+}
+
+button {
+  cursor: pointer;
+}
+
+/* ---------------------------
+   HOVER BUTTON STYLE (optional consistency)
+---------------------------- */
+button:hover {
+  background: #52796f;
+  color: white;
+}
+
+/* ---------------------------
+   MOBILE RESPONSIVE
+---------------------------- */
+@media (max-width: 768px) {
+
+  .card,
+  .block-input {
+    width: 95%;
+    margin: auto;
+  }
+
+  input,
+  select,
+  button {
+    width: 100%;
+    margin-bottom: 10px;
+  }
+
+  .nav-right {
+    flex-direction: column;
+    align-items: flex-end;
+  }
+
+  .nav-auth-slot {
+    width: auto;
+  }
 }
