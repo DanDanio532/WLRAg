@@ -240,6 +240,7 @@ function enforceVerticalPan(e) {
 }
 
 async function loadBlocks(locationID) {
+    // 1. Get all blocks for this location
     const { data: blocks, error: blocksError } = await supabase
         .from("block")
         .select("blockID, identifier")
@@ -251,6 +252,8 @@ async function loadBlocks(locationID) {
     }
 
     const blockIds = blocks.map(b => b.blockID);
+
+    // 2. Fetch coordinates for those blocks (one query)
     const { data: coordData, error: coordError } = await supabase
         .from("block_coordinates")
         .select("blockID, latitude, longitude, vertexOrder")
@@ -259,12 +262,39 @@ async function loadBlocks(locationID) {
 
     if (coordError || !coordData) return;
 
+    // 3. Fetch ALL varieties for these blocks in ONE query
+    const { data: allVarieties, error: varietiesError } = await supabase
+        .from("block_varieties")
+        .select(`
+            blockID,
+            varietyCount,
+            variety:varietyID (
+                varietyName
+            )
+        `)
+        .in("blockID", blockIds);
+
+    // Build a map: blockID -> array of {name, count}
+    const varietiesByBlock = new Map();
+    if (!varietiesError && allVarieties) {
+        for (const v of allVarieties) {
+            const blockID = v.blockID;
+            if (!varietiesByBlock.has(blockID)) varietiesByBlock.set(blockID, []);
+            varietiesByBlock.get(blockID).push({
+                name: v.variety?.varietyName || "Unknown",
+                count: v.varietyCount
+            });
+        }
+    }
+
+    // 4. Group coordinates by blockID
     const pointsByBlock = new Map();
     for (const p of coordData) {
         if (!pointsByBlock.has(p.blockID)) pointsByBlock.set(p.blockID, []);
         pointsByBlock.get(p.blockID).push([p.latitude, p.longitude]);
     }
 
+    // 5. Process each block (draw polygon, label, popup)
     for (const block of blocks) {
         const points = pointsByBlock.get(block.blockID);
         if (!points || points.length < 3) continue;
@@ -276,7 +306,7 @@ async function loadBlocks(locationID) {
             weight: 1.5
         }).addTo(blockLayer);
 
-        // True geometric centroid (Turf) for label
+        // True geometric centroid (Turf)
         const center = getPolygonCentroid(points);
         if (center) {
             L.marker(center, {
@@ -294,8 +324,8 @@ async function loadBlocks(locationID) {
         const { hectares, acres } = calculateArea(points);
         const areaText = `<p><strong>Area:</strong> ${hectares.toFixed(2)} ha / ${acres.toFixed(2)} acres</p>`;
 
-        // Fetch varieties
-        const varieties = await getBlockVarieties(block.blockID);
+        // Varieties from pre‑fetched map
+        const varieties = varietiesByBlock.get(block.blockID) || [];
         let varietyHtml = "";
         if (varieties.length === 0) {
             varietyHtml = "<p>No varieties assigned</p>";
