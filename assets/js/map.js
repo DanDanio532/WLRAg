@@ -31,12 +31,12 @@ async function initMap() {
 
     map = L.map("map", {
         zoomControl: false,
-        scrollWheelZoom: false,   // disable Leaflet's wheel zoom
+        scrollWheelZoom: false,
         doubleClickZoom: false,
         touchZoom: false,
         boxZoom: false,
         keyboard: false,
-        dragging: false,          // disable dragging
+        dragging: false,
         inertia: false,
         zoomAnimation: false,
         fadeAnimation: false
@@ -50,15 +50,11 @@ async function initMap() {
     boundaryLayer = L.layerGroup().addTo(map);
     blockLayer = L.layerGroup().addTo(map);
 
-    // Direct wheel listener for vertical pan (works on Mac trackpad)
+    // Direct wheel listener for vertical pan (works on Mac trackpad & mobile)
     const mapElement = map.getContainer();
     mapElement.addEventListener('wheel', function(e) {
-        // Prevent page scrolling
         e.preventDefault();
-        // Get vertical scroll amount (negative = scroll up, positive = scroll down)
         const delta = e.deltaY;
-        // Pan vertically: invert direction so that scrolling down pans down
-        // Adjust multiplier for trackpad sensitivity (try 0.5 to 1.0)
         const panAmount = delta * 0.8;
         map.panBy([0, panAmount], { animate: false });
     }, { passive: false });
@@ -72,7 +68,7 @@ async function loadLocations() {
 
     const { data, error } = await supabase
         .from("location")
-        .select("locationID, locationName")
+        .select("locationID, locationName, zoom_extra")
         .order("locationID");
 
     if (error || !data?.length) {
@@ -86,6 +82,8 @@ async function loadLocations() {
         const option = document.createElement("option");
         option.value = loc.locationID;
         option.textContent = `${i+1}. ${loc.locationName || "Unnamed"}`;
+        // Store zoom_extra as a data attribute for later use (optional)
+        option.dataset.zoomExtra = loc.zoom_extra ?? 0;
         select.appendChild(option);
     });
 
@@ -100,6 +98,7 @@ async function loadLocation(locationID) {
     map.off("drag", enforceHorizontalLock);
     map.off("dragend", enforceHorizontalLock);
 
+    // Fetch boundary coordinates
     const { data: coords, error } = await supabase
         .from("location_coordinates")
         .select("latitude, longitude, vertexOrder")
@@ -110,6 +109,14 @@ async function loadLocation(locationID) {
         console.error("Invalid boundary", error);
         return;
     }
+
+    // Fetch the location's zoom_extra value
+    const { data: locData } = await supabase
+        .from("location")
+        .select("zoom_extra")
+        .eq("locationID", locationID)
+        .single();
+    const customZoom = locData?.zoom_extra ?? null;
 
     const boundaryPoints = coords.map(p => [p.latitude, p.longitude]);
     const boundary = L.polygon(boundaryPoints, {
@@ -137,10 +144,12 @@ async function loadLocation(locationID) {
     let useHorizontalLock = false;
 
     if (isTallThin) {
-        extraZoom = 2.8;          // adjust as needed
+        // Use custom zoom if set, otherwise default 3.0
+        extraZoom = (customZoom !== null && !isNaN(customZoom)) ? customZoom : 3.0;
         useHorizontalLock = true;
     } else {
-        extraZoom = 0.0;
+        // For wide orchards, optionally use custom zoom (but default 0)
+        extraZoom = (customZoom !== null && !isNaN(customZoom)) ? customZoom : 0.0;
         useHorizontalLock = false;
     }
 
@@ -182,7 +191,6 @@ function enforceHorizontalLock() {
     }
 }
 
-// Enhanced loadBlocks with circular labels and variety-only popups
 async function loadBlocks(locationID) {
     const { data: blocks, error: blocksError } = await supabase
         .from("block")
@@ -214,7 +222,6 @@ async function loadBlocks(locationID) {
         const points = pointsByBlock.get(block.blockID);
         if (!points || points.length < 3) continue;
 
-        // Draw polygon
         const polygon = L.polygon(points, {
             color: "#52796f",
             fillColor: "#84a98c",
@@ -241,21 +248,21 @@ async function loadBlocks(locationID) {
             interactive: false
         }).addTo(blockLayer);
 
-        // Fetch varieties for popup (only varieties, no block name)
+        // Fetch varieties
         const varieties = await getBlockVarieties(block.blockID);
         let varietyHtml = "";
         if (varieties.length === 0) {
             varietyHtml = "<p>No varieties assigned</p>";
         } else {
-            varietyHtml = "<ul>";
+            varietyHtml = "<ul style='margin:0; padding-left:20px;'>";
             varieties.forEach(v => {
                 varietyHtml += `<li><strong>${v.name}</strong>: ${v.count} trees</li>`;
             });
             varietyHtml += "</ul>";
         }
 
-        const popupContent = `<div style="min-width: 120px;">${varietyHtml}</div>`;
-        polygon.bindPopup(popupContent);
+        // Popup shows ONLY varieties (no block name)
+        polygon.bindPopup(varietyHtml);
     }
 }
 
