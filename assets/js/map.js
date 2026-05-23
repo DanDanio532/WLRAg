@@ -5,7 +5,25 @@ let boundaryLayer;
 let blockLayer;
 let currentBounds = null;
 let fixedLongitude = null;
-let isTallThin = false;   // flag for tall & thin orchards
+let isTallThin = false;
+
+// Helper: fetch varieties for a single block
+async function getBlockVarieties(blockID) {
+    const { data, error } = await supabase
+        .from("block_varieties")
+        .select(`
+            varietyCount,
+            variety:varietyID (
+                varietyName
+            )
+        `)
+        .eq("blockID", blockID);
+    if (error || !data) return [];
+    return data.map(v => ({
+        name: v.variety?.varietyName || "Unknown",
+        count: v.varietyCount
+    }));
+}
 
 async function initMap() {
     const mapContainer = document.getElementById("map");
@@ -13,13 +31,13 @@ async function initMap() {
 
     map = L.map("map", {
         zoomControl: false,
-        scrollWheelZoom: false,
+        scrollWheelZoom: false,   // disable Leaflet's wheel zoom
         doubleClickZoom: false,
         touchZoom: false,
         boxZoom: false,
         keyboard: false,
-        dragging: true,
-        inertia: true,
+        dragging: false,          // disable dragging
+        inertia: false,
         zoomAnimation: false,
         fadeAnimation: false
     });
@@ -31,6 +49,19 @@ async function initMap() {
 
     boundaryLayer = L.layerGroup().addTo(map);
     blockLayer = L.layerGroup().addTo(map);
+
+    // Direct wheel listener for vertical pan (works on Mac trackpad)
+    const mapElement = map.getContainer();
+    mapElement.addEventListener('wheel', function(e) {
+        // Prevent page scrolling
+        e.preventDefault();
+        // Get vertical scroll amount (negative = scroll up, positive = scroll down)
+        const delta = e.deltaY;
+        // Pan vertically: invert direction so that scrolling down pans down
+        // Adjust multiplier for trackpad sensitivity (try 0.5 to 1.0)
+        const panAmount = delta * 0.8;
+        map.panBy([0, panAmount], { animate: false });
+    }, { passive: false });
 
     await loadLocations();
 }
@@ -66,7 +97,6 @@ async function loadLocation(locationID) {
     boundaryLayer.clearLayers();
     blockLayer.clearLayers();
 
-    // Remove previous horizontal lock listener if any
     map.off("drag", enforceHorizontalLock);
     map.off("dragend", enforceHorizontalLock);
 
@@ -91,16 +121,15 @@ async function loadLocation(locationID) {
     const bounds = boundary.getBounds();
     currentBounds = bounds;
 
-    // ---- ADAPTIVE BEHAVIOR BASED ON ORCHARD SHAPE ----
+    // Adaptive behaviour based on orchard shape
     const north = bounds.getNorth();
     const south = bounds.getSouth();
     const east = bounds.getEast();
     const west = bounds.getWest();
-    const height = north - south;      // degrees latitude
-    const width = east - west;         // degrees longitude
-    const aspectRatio = height / width; // >1 means taller than wide
+    const height = north - south;
+    const width = east - west;
+    const aspectRatio = height / width;
 
-    // Threshold: if orchard is more than 1.5x taller than wide, treat as "tall & thin"
     const TALL_THIN_THRESHOLD = 1.5;
     isTallThin = aspectRatio > TALL_THIN_THRESHOLD;
 
@@ -108,18 +137,14 @@ async function loadLocation(locationID) {
     let useHorizontalLock = false;
 
     if (isTallThin) {
-        // Tall & thin: zoom in heavily, lock horizontal pan
         extraZoom = 3.0;          // adjust as needed
         useHorizontalLock = true;
     } else {
-        // Wider or square: standard fit, no horizontal lock, moderate zoom
-        extraZoom = 0.0;          // no extra zoom beyond fit
+        extraZoom = 0.0;
         useHorizontalLock = false;
     }
 
-    // Fit bounds with zero padding
     map.fitBounds(bounds, { padding: [0, 0] });
-    
     const currentZoom = map.getZoom();
     const newZoom = Math.min(currentZoom + extraZoom, map.getMaxZoom());
     const center = bounds.getCenter();
@@ -127,23 +152,17 @@ async function loadLocation(locationID) {
     if (useHorizontalLock) {
         fixedLongitude = center.lng;
         map.setView(center, newZoom, { animate: false });
-        // Enforce horizontal lock on drag
         map.on("drag", enforceHorizontalLock);
         map.on("dragend", enforceHorizontalLock);
     } else {
-        // For wider orchards: just set view and allow free panning (bounded)
         fixedLongitude = null;
         map.setView(center, newZoom, { animate: false });
     }
 
-    // Lock the zoom level to prevent accidental changes
     map.setMinZoom(newZoom);
     map.setMaxZoom(newZoom);
-    
-    // Set bounds for panning (prevents leaving the orchard)
     map.setMaxBounds(bounds);
-    
-    // Set map container height (tall for all cases)
+
     const mapEl = document.getElementById("map");
     if (mapEl) {
         let height = window.innerHeight * 0.8;
@@ -163,6 +182,7 @@ function enforceHorizontalLock() {
     }
 }
 
+// Enhanced loadBlocks with circular labels and variety-only popups
 async function loadBlocks(locationID) {
     const { data: blocks, error: blocksError } = await supabase
         .from("block")
@@ -175,6 +195,7 @@ async function loadBlocks(locationID) {
     }
 
     const blockIds = blocks.map(b => b.blockID);
+
     const { data: coordData, error: coordError } = await supabase
         .from("block_coordinates")
         .select("blockID, latitude, longitude, vertexOrder")
@@ -192,13 +213,49 @@ async function loadBlocks(locationID) {
     for (const block of blocks) {
         const points = pointsByBlock.get(block.blockID);
         if (!points || points.length < 3) continue;
+
+        // Draw polygon
         const polygon = L.polygon(points, {
             color: "#52796f",
             fillColor: "#84a98c",
             fillOpacity: 0.5,
             weight: 1.5
         }).addTo(blockLayer);
-        polygon.bindPopup(`<strong>${block.identifier}</strong>`);
+
+        // Calculate centroid
+        let sumLat = 0, sumLng = 0;
+        for (const p of points) {
+            sumLat += p[0];
+            sumLng += p[1];
+        }
+        const center = [sumLat / points.length, sumLng / points.length];
+
+        // Circular yellow label
+        L.marker(center, {
+            icon: L.divIcon({
+                className: "block-label",
+                html: `<div class="block-label-text">${block.identifier}</div>`,
+                iconSize: [30, 30],
+                iconAnchor: [15, 15]
+            }),
+            interactive: false
+        }).addTo(blockLayer);
+
+        // Fetch varieties for popup (only varieties, no block name)
+        const varieties = await getBlockVarieties(block.blockID);
+        let varietyHtml = "";
+        if (varieties.length === 0) {
+            varietyHtml = "<p>No varieties assigned</p>";
+        } else {
+            varietyHtml = "<ul>";
+            varieties.forEach(v => {
+                varietyHtml += `<li><strong>${v.name}</strong>: ${v.count} trees</li>`;
+            });
+            varietyHtml += "</ul>";
+        }
+
+        const popupContent = `<div style="min-width: 120px;">${varietyHtml}</div>`;
+        polygon.bindPopup(popupContent);
     }
 }
 
