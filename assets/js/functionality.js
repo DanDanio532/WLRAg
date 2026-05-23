@@ -11,28 +11,17 @@ function setOpacity(el, visible) {
 }
 
 async function updateAuthUI() {
-
-  const { data: { session } } =
-    await supabase.auth.getSession();
-
+  const { data: { session } } = await supabase.auth.getSession();
   const loggedIn = !!session;
 
-  // AUTH TOGGLE (USE CLASSES INSTEAD)
+  // AUTH TOGGLE (Sign In / Sign Out)
   if (authLink && signOutLink) {
-
     authLink.classList.toggle("visible", !loggedIn);
     signOutLink.classList.toggle("visible", loggedIn);
   }
 
-  // UPDATE LINK
-  if (updateLink) {
-    updateLink.style.display = loggedIn ? "inline-block" : "none";
-  }
-  // MAP LINK – hide when not logged in (same as update)
-  const mapLink = document.getElementById("map-link");
-  if (mapLink) {
-    mapLink.style.display = loggedIn ? "inline-block" : "none";
-  }
+  // Do NOT hide any navigation links – they are always visible.
+  // protect.js will handle redirects to login if not authenticated.
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
