@@ -26,8 +26,12 @@ async function updateAuthUI() {
 
   // UPDATE LINK
   if (updateLink) {
-    updateLink.style.display =
-      loggedIn ? "inline-block" : "none";
+    updateLink.style.display = loggedIn ? "inline-block" : "none";
+  }
+  // MAP LINK – hide when not logged in (same as update)
+  const mapLink = document.getElementById("map-link");
+  if (mapLink) {
+    mapLink.style.display = loggedIn ? "inline-block" : "none";
   }
 }
 
