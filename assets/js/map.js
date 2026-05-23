@@ -28,7 +28,7 @@ async function getBlockVarieties(blockID) {
     }));
 }
 
-// Calculate area of a polygon in hectares and acres
+// Calculate area of a polygon in hectares and acres (using Turf)
 function calculateArea(points) {
     // points: array of [lat, lng]
     if (!points || points.length < 3) return { hectares: 0, acres: 0 };
@@ -43,6 +43,19 @@ function calculateArea(points) {
     const hectares = areaSqM / 10000;
     const acres = hectares * 2.47105;
     return { hectares, acres };
+}
+
+// Get true geometric centroid of a polygon (using Turf)
+function getPolygonCentroid(points) {
+    if (!points || points.length < 3) return null;
+    const coords = points.map(p => [p[1], p[0]]);
+    if (coords[0][0] !== coords[coords.length-1][0] || coords[0][1] !== coords[coords.length-1][1]) {
+        coords.push(coords[0]);
+    }
+    const polygon = turf.polygon([coords]);
+    const centroid = turf.centroid(polygon);
+    const [lng, lat] = centroid.geometry.coordinates;
+    return [lat, lng];
 }
 
 async function initMap() {
@@ -263,24 +276,19 @@ async function loadBlocks(locationID) {
             weight: 1.5
         }).addTo(blockLayer);
 
-        // Calculate centroid for label
-        let sumLat = 0, sumLng = 0;
-        for (const p of points) {
-            sumLat += p[0];
-            sumLng += p[1];
+        // True geometric centroid (Turf) for label
+        const center = getPolygonCentroid(points);
+        if (center) {
+            L.marker(center, {
+                icon: L.divIcon({
+                    className: "block-label",
+                    html: `<div class="block-label-text">${block.identifier}</div>`,
+                    iconSize: [30, 30],
+                    iconAnchor: [15, 15]
+                }),
+                interactive: false
+            }).addTo(blockLayer);
         }
-        const center = [sumLat / points.length, sumLng / points.length];
-
-        // Circular yellow label
-        L.marker(center, {
-            icon: L.divIcon({
-                className: "block-label",
-                html: `<div class="block-label-text">${block.identifier}</div>`,
-                iconSize: [30, 30],
-                iconAnchor: [15, 15]
-            }),
-            interactive: false
-        }).addTo(blockLayer);
 
         // Calculate area
         const { hectares, acres } = calculateArea(points);
@@ -299,10 +307,7 @@ async function loadBlocks(locationID) {
             varietyHtml += "</ul>";
         }
 
-        // Combine area and varieties in popup
         const popupContent = `<div style="min-width: 150px;">${areaText}${varietyHtml}</div>`;
-
-        // Bind popup with improved options
         polygon.bindPopup(popupContent, {
             autoPan: true,
             autoPanPadding: [20, 20],
