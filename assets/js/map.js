@@ -28,6 +28,23 @@ async function getBlockVarieties(blockID) {
     }));
 }
 
+// Calculate area of a polygon in hectares and acres
+function calculateArea(points) {
+    // points: array of [lat, lng]
+    if (!points || points.length < 3) return { hectares: 0, acres: 0 };
+    // Convert to GeoJSON polygon (turf expects [lng, lat] order)
+    const coords = points.map(p => [p[1], p[0]]);
+    // Close ring if not already closed
+    if (coords[0][0] !== coords[coords.length-1][0] || coords[0][1] !== coords[coords.length-1][1]) {
+        coords.push(coords[0]);
+    }
+    const polygon = turf.polygon([coords]);
+    const areaSqM = turf.area(polygon); // square meters
+    const hectares = areaSqM / 10000;
+    const acres = hectares * 2.47105;
+    return { hectares, acres };
+}
+
 async function initMap() {
     const mapContainer = document.getElementById("map");
     if (!mapContainer) return;
@@ -246,7 +263,7 @@ async function loadBlocks(locationID) {
             weight: 1.5
         }).addTo(blockLayer);
 
-        // Calculate centroid
+        // Calculate centroid for label
         let sumLat = 0, sumLng = 0;
         for (const p of points) {
             sumLat += p[0];
@@ -265,6 +282,10 @@ async function loadBlocks(locationID) {
             interactive: false
         }).addTo(blockLayer);
 
+        // Calculate area
+        const { hectares, acres } = calculateArea(points);
+        const areaText = `<p><strong>Area:</strong> ${hectares.toFixed(2)} ha / ${acres.toFixed(2)} acres</p>`;
+
         // Fetch varieties
         const varieties = await getBlockVarieties(block.blockID);
         let varietyHtml = "";
@@ -278,8 +299,11 @@ async function loadBlocks(locationID) {
             varietyHtml += "</ul>";
         }
 
-        // Bind popup with improved options to prevent clipping on mobile
-        polygon.bindPopup(varietyHtml, {
+        // Combine area and varieties in popup
+        const popupContent = `<div style="min-width: 150px;">${areaText}${varietyHtml}</div>`;
+
+        // Bind popup with improved options
+        polygon.bindPopup(popupContent, {
             autoPan: true,
             autoPanPadding: [20, 20],
             offset: [0, -10],
