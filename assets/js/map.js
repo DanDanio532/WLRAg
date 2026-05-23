@@ -137,7 +137,7 @@ async function loadLocation(locationID) {
     let useHorizontalLock = false;
 
     if (isTallThin) {
-        extraZoom = 3.0;          // adjust as needed
+        extraZoom = 2.8;          // adjust as needed
         useHorizontalLock = true;
     } else {
         extraZoom = 0.0;
