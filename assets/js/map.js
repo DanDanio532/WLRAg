@@ -7,6 +7,9 @@ let currentBounds = null;
 let fixedLongitude = null;
 let isTallThin = false;
 
+// Detect mobile (touch support + small screen)
+const isMobile = 'ontouchstart' in window && window.innerWidth <= 768;
+
 // Helper: fetch varieties for a single block
 async function getBlockVarieties(blockID) {
     const { data, error } = await supabase
@@ -29,18 +32,21 @@ async function initMap() {
     const mapContainer = document.getElementById("map");
     if (!mapContainer) return;
 
-    map = L.map("map", {
+    // Configure map based on device
+    const mapOptions = {
         zoomControl: false,
         scrollWheelZoom: false,
         doubleClickZoom: false,
         touchZoom: false,
         boxZoom: false,
         keyboard: false,
-        dragging: false,
-        inertia: false,
         zoomAnimation: false,
-        fadeAnimation: false
-    });
+        fadeAnimation: false,
+        dragging: isMobile ? true : false,      // enable drag on mobile
+        inertia: isMobile ? true : false
+    };
+
+    map = L.map("map", mapOptions);
 
     L.tileLayer(
         "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
@@ -50,14 +56,16 @@ async function initMap() {
     boundaryLayer = L.layerGroup().addTo(map);
     blockLayer = L.layerGroup().addTo(map);
 
-    // Direct wheel listener for vertical pan (works on Mac trackpad & mobile)
-    const mapElement = map.getContainer();
-    mapElement.addEventListener('wheel', function(e) {
-        e.preventDefault();
-        const delta = e.deltaY;
-        const panAmount = delta * 0.8;
-        map.panBy([0, panAmount], { animate: false });
-    }, { passive: false });
+    if (!isMobile) {
+        // Desktop: wheel listener for vertical panning
+        const mapElement = map.getContainer();
+        mapElement.addEventListener('wheel', function(e) {
+            e.preventDefault();
+            const delta = e.deltaY;
+            const panAmount = delta * 0.8;
+            map.panBy([0, panAmount], { animate: false });
+        }, { passive: false });
+    }
 
     await loadLocations();
 }
@@ -82,8 +90,6 @@ async function loadLocations() {
         const option = document.createElement("option");
         option.value = loc.locationID;
         option.textContent = `${i+1}. ${loc.locationName || "Unnamed"}`;
-        // Store zoom_extra as a data attribute for later use (optional)
-        option.dataset.zoomExtra = loc.zoom_extra ?? 0;
         select.appendChild(option);
     });
 
@@ -95,6 +101,9 @@ async function loadLocation(locationID) {
     boundaryLayer.clearLayers();
     blockLayer.clearLayers();
 
+    // Remove old event listeners
+    map.off("drag", enforceVerticalPan);
+    map.off("dragend", enforceVerticalPan);
     map.off("drag", enforceHorizontalLock);
     map.off("dragend", enforceHorizontalLock);
 
@@ -110,7 +119,7 @@ async function loadLocation(locationID) {
         return;
     }
 
-    // Fetch the location's zoom_extra value
+    // Fetch location's custom zoom_extra
     const { data: locData } = await supabase
         .from("location")
         .select("zoom_extra")
@@ -128,7 +137,7 @@ async function loadLocation(locationID) {
     const bounds = boundary.getBounds();
     currentBounds = bounds;
 
-    // Adaptive behaviour based on orchard shape
+    // Adaptive behaviour
     const north = bounds.getNorth();
     const south = bounds.getSouth();
     const east = bounds.getEast();
@@ -144,11 +153,9 @@ async function loadLocation(locationID) {
     let useHorizontalLock = false;
 
     if (isTallThin) {
-        // Use custom zoom if set, otherwise default 3.0
         extraZoom = (customZoom !== null && !isNaN(customZoom)) ? customZoom : 3.0;
         useHorizontalLock = true;
     } else {
-        // For wide orchards, optionally use custom zoom (but default 0)
         extraZoom = (customZoom !== null && !isNaN(customZoom)) ? customZoom : 0.0;
         useHorizontalLock = false;
     }
@@ -156,22 +163,28 @@ async function loadLocation(locationID) {
     map.fitBounds(bounds, { padding: [0, 0] });
     const currentZoom = map.getZoom();
     const newZoom = Math.min(currentZoom + extraZoom, map.getMaxZoom());
-
-    console.log("fitBounds zoom:", currentZoom);
-    console.log("extraZoom:", extraZoom);
-    console.log("newZoom:", newZoom);
-    console.log("zoom_extra from DB:", customZoom);
-    
     const center = bounds.getCenter();
 
+    // Set view and apply locks based on device and orchard shape
     if (useHorizontalLock) {
         fixedLongitude = center.lng;
         map.setView(center, newZoom, { animate: false });
-        map.on("drag", enforceHorizontalLock);
-        map.on("dragend", enforceHorizontalLock);
+        // On mobile, we restrict drag to vertical; on desktop, we use horizontal lock via setView reset
+        if (isMobile) {
+            // For mobile: allow dragging but enforce vertical-only and prevent horizontal change
+            map.on("drag", enforceVerticalPan);
+            map.on("dragend", enforceVerticalPan);
+        } else {
+            map.on("drag", enforceHorizontalLock);
+            map.on("dragend", enforceHorizontalLock);
+        }
     } else {
         fixedLongitude = null;
         map.setView(center, newZoom, { animate: false });
+        // For wide orchards on mobile, allow free drag (but still within maxBounds)
+        if (isMobile) {
+            // No additional constraint needed, just allow any direction within bounds
+        }
     }
 
     map.setMinZoom(newZoom);
@@ -189,11 +202,28 @@ async function loadLocation(locationID) {
     await loadBlocks(locationID);
 }
 
+// For desktop: keep horizontal lock (reset longitude on drag)
 function enforceHorizontalLock() {
     if (!map || fixedLongitude === null) return;
     const center = map.getCenter();
     if (Math.abs(center.lng - fixedLongitude) > 0.000001) {
         map.setView([center.lat, fixedLongitude], map.getZoom(), { animate: false });
+    }
+}
+
+// For mobile: restrict dragging to vertical only (preserve longitude)
+let lastLat = null;
+function enforceVerticalPan(e) {
+    if (!map || fixedLongitude === null) return;
+    const center = map.getCenter();
+    // When dragging ends, we snap back to the fixed longitude and keep the new latitude
+    if (e.type === 'dragend') {
+        map.setView([center.lat, fixedLongitude], map.getZoom(), { animate: false });
+    } else {
+        // During drag, we continuously enforce the longitude to prevent sideways movement
+        if (Math.abs(center.lng - fixedLongitude) > 0.000001) {
+            map.setView([center.lat, fixedLongitude], map.getZoom(), { animate: false });
+        }
     }
 }
 
@@ -209,7 +239,6 @@ async function loadBlocks(locationID) {
     }
 
     const blockIds = blocks.map(b => b.blockID);
-
     const { data: coordData, error: coordError } = await supabase
         .from("block_coordinates")
         .select("blockID, latitude, longitude, vertexOrder")
@@ -267,7 +296,6 @@ async function loadBlocks(locationID) {
             varietyHtml += "</ul>";
         }
 
-        // Popup shows ONLY varieties (no block name)
         polygon.bindPopup(varietyHtml);
     }
 }
