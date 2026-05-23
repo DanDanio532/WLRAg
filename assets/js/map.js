@@ -156,6 +156,12 @@ async function loadLocation(locationID) {
     map.fitBounds(bounds, { padding: [0, 0] });
     const currentZoom = map.getZoom();
     const newZoom = Math.min(currentZoom + extraZoom, map.getMaxZoom());
+
+    console.log("fitBounds zoom:", currentZoom);
+    console.log("extraZoom:", extraZoom);
+    console.log("newZoom:", newZoom);
+    console.log("zoom_extra from DB:", customZoom);
+    
     const center = bounds.getCenter();
 
     if (useHorizontalLock) {
