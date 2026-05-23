@@ -6,46 +6,29 @@ let blockLayer;
 let currentBounds = null;
 let fixedLongitude = null;
 let isTallThin = false;
+let loadingDiv = null;
 
-// Detect mobile (touch support + small screen)
+// Detect mobile
 const isMobile = 'ontouchstart' in window && window.innerWidth <= 768;
 
-// Helper: fetch varieties for a single block
-async function getBlockVarieties(blockID) {
-    const { data, error } = await supabase
-        .from("block_varieties")
-        .select(`
-            varietyCount,
-            variety:varietyID (
-                varietyName
-            )
-        `)
-        .eq("blockID", blockID);
-    if (error || !data) return [];
-    return data.map(v => ({
-        name: v.variety?.varietyName || "Unknown",
-        count: v.varietyCount
-    }));
-}
+// Helper: fetch varieties for a single block (kept for compatibility, but not used in batch)
+async function getBlockVarieties(blockID) { /* not used – we batch now */ }
 
-// Calculate area of a polygon in hectares and acres (using Turf)
+// Calculate area
 function calculateArea(points) {
-    // points: array of [lat, lng]
     if (!points || points.length < 3) return { hectares: 0, acres: 0 };
-    // Convert to GeoJSON polygon (turf expects [lng, lat] order)
     const coords = points.map(p => [p[1], p[0]]);
-    // Close ring if not already closed
     if (coords[0][0] !== coords[coords.length-1][0] || coords[0][1] !== coords[coords.length-1][1]) {
         coords.push(coords[0]);
     }
     const polygon = turf.polygon([coords]);
-    const areaSqM = turf.area(polygon); // square meters
+    const areaSqM = turf.area(polygon);
     const hectares = areaSqM / 10000;
     const acres = hectares * 2.47105;
     return { hectares, acres };
 }
 
-// Get true geometric centroid of a polygon (using Turf)
+// Get true geometric centroid
 function getPolygonCentroid(points) {
     if (!points || points.length < 3) return null;
     const coords = points.map(p => [p[1], p[0]]);
@@ -56,6 +39,30 @@ function getPolygonCentroid(points) {
     const centroid = turf.centroid(polygon);
     const [lng, lat] = centroid.geometry.coordinates;
     return [lat, lng];
+}
+
+// Show/hide loading spinner
+function setLoading(visible) {
+    if (!loadingDiv) {
+        loadingDiv = document.createElement('div');
+        loadingDiv.id = 'map-loading';
+        loadingDiv.textContent = 'Loading blocks...';
+        loadingDiv.style.cssText = `
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            z-index: 1000;
+            font-size: 12px;
+            pointer-events: none;
+        `;
+        document.getElementById('map').parentElement.style.position = 'relative';
+        document.getElementById('map').parentElement.appendChild(loadingDiv);
+    }
+    loadingDiv.style.display = visible ? 'block' : 'none';
 }
 
 async function initMap() {
@@ -175,7 +182,6 @@ async function loadLocation(locationID) {
 
     let extraZoom;
     let useHorizontalLock = false;
-
     if (isTallThin) {
         extraZoom = (customZoom !== null && !isNaN(customZoom)) ? customZoom : 3.0;
         useHorizontalLock = true;
@@ -216,7 +222,7 @@ async function loadLocation(locationID) {
         setTimeout(() => map.invalidateSize(), 50);
     }
 
-    await loadBlocks(locationID);
+    await loadBlocksOptimized(locationID);
 }
 
 function enforceHorizontalLock() {
@@ -239,113 +245,124 @@ function enforceVerticalPan(e) {
     }
 }
 
-async function loadBlocks(locationID) {
-    // 1. Get all blocks for this location
+// Optimised block loading with incremental rendering
+async function loadBlocksOptimized(locationID) {
+    setLoading(true);
+
+    // 1. Get blocks
     const { data: blocks, error: blocksError } = await supabase
         .from("block")
         .select("blockID, identifier")
         .eq("locationID", locationID);
-
     if (blocksError || !blocks?.length) {
-        console.log("No blocks found");
+        setLoading(false);
         return;
     }
 
     const blockIds = blocks.map(b => b.blockID);
 
-    // 2. Fetch coordinates for those blocks (one query)
+    // 2. Fetch coordinates (all at once)
     const { data: coordData, error: coordError } = await supabase
         .from("block_coordinates")
         .select("blockID, latitude, longitude, vertexOrder")
         .in("blockID", blockIds)
         .order("vertexOrder");
+    if (coordError || !coordData) {
+        setLoading(false);
+        return;
+    }
 
-    if (coordError || !coordData) return;
-
-    // 3. Fetch ALL varieties for these blocks in ONE query
+    // 3. Fetch all varieties (one query)
     const { data: allVarieties, error: varietiesError } = await supabase
         .from("block_varieties")
         .select(`
             blockID,
             varietyCount,
-            variety:varietyID (
-                varietyName
-            )
+            variety:varietyID ( varietyName )
         `)
         .in("blockID", blockIds);
-
-    // Build a map: blockID -> array of {name, count}
     const varietiesByBlock = new Map();
     if (!varietiesError && allVarieties) {
         for (const v of allVarieties) {
-            const blockID = v.blockID;
-            if (!varietiesByBlock.has(blockID)) varietiesByBlock.set(blockID, []);
-            varietiesByBlock.get(blockID).push({
+            if (!varietiesByBlock.has(v.blockID)) varietiesByBlock.set(v.blockID, []);
+            varietiesByBlock.get(v.blockID).push({
                 name: v.variety?.varietyName || "Unknown",
                 count: v.varietyCount
             });
         }
     }
 
-    // 4. Group coordinates by blockID
+    // 4. Group points by blockID
     const pointsByBlock = new Map();
     for (const p of coordData) {
         if (!pointsByBlock.has(p.blockID)) pointsByBlock.set(p.blockID, []);
         pointsByBlock.get(p.blockID).push([p.latitude, p.longitude]);
     }
 
-    // 5. Process each block (draw polygon, label, popup)
-    for (const block of blocks) {
+    // 5. Incrementally render each block (using setTimeout to let UI update)
+    let index = 0;
+    function renderNextBlock() {
+        if (index >= blocks.length) {
+            setLoading(false);
+            return;
+        }
+        const block = blocks[index];
         const points = pointsByBlock.get(block.blockID);
-        if (!points || points.length < 3) continue;
-
-        const polygon = L.polygon(points, {
-            color: "#52796f",
-            fillColor: "#84a98c",
-            fillOpacity: 0.5,
-            weight: 1.5
-        }).addTo(blockLayer);
-
-        // True geometric centroid (Turf)
-        const center = getPolygonCentroid(points);
-        if (center) {
-            L.marker(center, {
-                icon: L.divIcon({
-                    className: "block-label",
-                    html: `<div class="block-label-text">${block.identifier}</div>`,
-                    iconSize: [30, 30],
-                    iconAnchor: [15, 15]
-                }),
-                interactive: false
+        if (points && points.length >= 3) {
+            // Draw polygon
+            const polygon = L.polygon(points, {
+                color: "#52796f",
+                fillColor: "#84a98c",
+                fillOpacity: 0.5,
+                weight: 1.5
             }).addTo(blockLayer);
-        }
 
-        // Calculate area
-        const { hectares, acres } = calculateArea(points);
-        const areaText = `<p><strong>Area:</strong> ${hectares.toFixed(2)} ha / ${acres.toFixed(2)} acres</p>`;
+            // Centroid for label
+            const center = getPolygonCentroid(points);
+            if (center) {
+                L.marker(center, {
+                    icon: L.divIcon({
+                        className: "block-label",
+                        html: `<div class="block-label-text">${block.identifier}</div>`,
+                        iconSize: [30, 30],
+                        iconAnchor: [15, 15]
+                    }),
+                    interactive: false
+                }).addTo(blockLayer);
+            }
 
-        // Varieties from pre‑fetched map
-        const varieties = varietiesByBlock.get(block.blockID) || [];
-        let varietyHtml = "";
-        if (varieties.length === 0) {
-            varietyHtml = "<p>No varieties assigned</p>";
-        } else {
-            varietyHtml = "<ul style='margin:0; padding-left:20px;'>";
-            varieties.forEach(v => {
-                varietyHtml += `<li><strong>${v.name}</strong>: ${v.count} trees</li>`;
+            // Area
+            const { hectares, acres } = calculateArea(points);
+            const areaText = `<p><strong>Area:</strong> ${hectares.toFixed(2)} ha / ${acres.toFixed(2)} acres</p>`;
+
+            // Varieties
+            const varieties = varietiesByBlock.get(block.blockID) || [];
+            let varietyHtml = "";
+            if (varieties.length === 0) {
+                varietyHtml = "<p>No varieties assigned</p>";
+            } else {
+                varietyHtml = "<ul style='margin:0; padding-left:20px;'>";
+                varieties.forEach(v => {
+                    varietyHtml += `<li><strong>${v.name}</strong>: ${v.count} trees</li>`;
+                });
+                varietyHtml += "</ul>";
+            }
+
+            const popupContent = `<div style="min-width: 150px;">${areaText}${varietyHtml}</div>`;
+            polygon.bindPopup(popupContent, {
+                autoPan: true,
+                autoPanPadding: [20, 20],
+                offset: [0, -10],
+                closeButton: true,
+                closeOnClick: true
             });
-            varietyHtml += "</ul>";
         }
-
-        const popupContent = `<div style="min-width: 150px;">${areaText}${varietyHtml}</div>`;
-        polygon.bindPopup(popupContent, {
-            autoPan: true,
-            autoPanPadding: [20, 20],
-            offset: [0, -10],
-            closeButton: true,
-            closeOnClick: true
-        });
+        index++;
+        // Yield to browser to keep UI responsive
+        setTimeout(renderNextBlock, 5);
     }
+
+    renderNextBlock();
 }
 
 document.addEventListener("DOMContentLoaded", initMap);
