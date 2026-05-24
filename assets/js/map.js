@@ -25,23 +25,40 @@ function calculateArea(points) {
     return { hectares, acres };
 }
 
-// Get label position: manual if provided, otherwise automatic
-let center = null;
-if (block.label_lat && block.label_long) {
-    center = [block.label_lat, block.label_long];
-} else {
-    center = getPolygonCentroid(points);
-}
-if (center) {
-    L.marker(center, {
-        icon: L.divIcon({
-            className: "block-label",
-            html: `<div class="block-label-text">${block.identifier}</div>`,
-            iconSize: [30, 30],
-            iconAnchor: [15, 15]
-        }),
-        interactive: false
-    }).addTo(blockLayer);
+// Get label position: polylabel (guaranteed inside) with fallback
+function getPolygonCentroid(points) {
+    if (!points || points.length < 3) return null;
+    let coords = points.map(p => [p[1], p[0]]);
+    // Close ring
+    const first = coords[0];
+    const last = coords[coords.length - 1];
+    if (first[0] !== last[0] || first[1] !== last[1]) {
+        coords.push([first[0], first[1]]);
+    }
+    // Remove duplicate consecutive points
+    const cleaned = [];
+    for (let i = 0; i < coords.length; i++) {
+        const curr = coords[i];
+        const prev = cleaned[cleaned.length - 1];
+        if (!prev || prev[0] !== curr[0] || prev[1] !== curr[1]) {
+            cleaned.push(curr);
+        }
+    }
+    if (cleaned.length < 4) return null;
+    try {
+        const polygon = turf.polygon([cleaned]);
+        const pt = turf.pointOnFeature(polygon);
+        const [lng, lat] = pt.geometry.coordinates;
+        return [lat, lng];
+    } catch (e) {
+        // Fallback: vertex average
+        let sumLat = 0, sumLng = 0;
+        for (const p of points) {
+            sumLat += p[0];
+            sumLng += p[1];
+        }
+        return [sumLat / points.length, sumLng / points.length];
+    }
 }
 
 // Show/hide loading spinner
@@ -248,14 +265,14 @@ function enforceVerticalPan(e) {
     }
 }
 
-// Optimised block loading with incremental rendering
+// Optimised block loading with incremental rendering + manual label override
 async function loadBlocksOptimized(locationID) {
     setLoading(true);
 
-    // 1. Get blocks
+    // 1. Get blocks (including manual label columns if they exist)
     const { data: blocks, error: blocksError } = await supabase
         .from("block")
-        .select("blockID, identifier, label_lat, label_long")   // add these fields
+        .select("blockID, identifier, label_lat, label_long")
         .eq("locationID", locationID);
     if (blocksError || !blocks?.length) {
         setLoading(false);
@@ -264,7 +281,7 @@ async function loadBlocksOptimized(locationID) {
 
     const blockIds = blocks.map(b => b.blockID);
 
-    // 2. Fetch coordinates (all at once)
+    // 2. Fetch coordinates
     const { data: coordData, error: coordError } = await supabase
         .from("block_coordinates")
         .select("blockID, latitude, longitude, vertexOrder")
@@ -275,7 +292,7 @@ async function loadBlocksOptimized(locationID) {
         return;
     }
 
-    // 3. Fetch all varieties (one query)
+    // 3. Fetch all varieties
     const { data: allVarieties, error: varietiesError } = await supabase
         .from("block_varieties")
         .select(`
@@ -295,14 +312,14 @@ async function loadBlocksOptimized(locationID) {
         }
     }
 
-    // 4. Group points by blockID
+    // 4. Group points
     const pointsByBlock = new Map();
     for (const p of coordData) {
         if (!pointsByBlock.has(p.blockID)) pointsByBlock.set(p.blockID, []);
         pointsByBlock.get(p.blockID).push([p.latitude, p.longitude]);
     }
 
-    // 5. Incrementally render each block
+    // 5. Incrementally render
     let index = 0;
     function renderNextBlock() {
         if (index >= blocks.length) {
@@ -320,8 +337,13 @@ async function loadBlocksOptimized(locationID) {
                 weight: 1.5
             }).addTo(blockLayer);
 
-            // Improved centroid for label (pointOnFeature + fallback)
-            const center = getPolygonCentroid(points);
+            // Label position: use manual if provided, else auto centroid
+            let center = null;
+            if (block.label_lat && block.label_long) {
+                center = [block.label_lat, block.label_long];
+            } else {
+                center = getPolygonCentroid(points);
+            }
             if (center) {
                 L.marker(center, {
                     icon: L.divIcon({
@@ -338,7 +360,7 @@ async function loadBlocksOptimized(locationID) {
             const { hectares, acres } = calculateArea(points);
             const areaText = `<p><strong>Area:</strong> ${hectares.toFixed(2)} ha / ${acres.toFixed(2)} acres</p>`;
 
-            // Varieties
+            // Varieties: if count == 0, show only name (no number)
             const varieties = varietiesByBlock.get(block.blockID) || [];
             let varietyHtml = "";
             if (varieties.length === 0) {
@@ -346,7 +368,11 @@ async function loadBlocksOptimized(locationID) {
             } else {
                 varietyHtml = "<ul style='margin:0; padding-left:20px;'>";
                 varieties.forEach(v => {
-                    varietyHtml += `<li><strong>${v.name}</strong>: ${v.count} trees</li>`;
+                    if (v.count === 0) {
+                        varietyHtml += `<li><strong>${v.name}</strong></li>`;
+                    } else {
+                        varietyHtml += `<li><strong>${v.name}</strong>: ${v.count} trees</li>`;
+                    }
                 });
                 varietyHtml += "</ul>";
             }
@@ -361,7 +387,6 @@ async function loadBlocksOptimized(locationID) {
             });
         }
         index++;
-        // Yield to browser to keep UI responsive
         setTimeout(renderNextBlock, 5);
     }
 
