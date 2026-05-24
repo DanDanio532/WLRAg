@@ -11,10 +11,7 @@ let loadingDiv = null;
 // Detect mobile
 const isMobile = 'ontouchstart' in window && window.innerWidth <= 768;
 
-// Helper: fetch varieties for a single block (kept for compatibility, but not used in batch)
-async function getBlockVarieties(blockID) { /* not used – we batch now */ }
-
-// Calculate area
+// Calculate area (hectares & acres)
 function calculateArea(points) {
     if (!points || points.length < 3) return { hectares: 0, acres: 0 };
     const coords = points.map(p => [p[1], p[0]]);
@@ -28,17 +25,23 @@ function calculateArea(points) {
     return { hectares, acres };
 }
 
-// Get true geometric centroid
-function getPolygonCentroid(points) {
-    if (!points || points.length < 3) return null;
-    const coords = points.map(p => [p[1], p[0]]);
-    if (coords[0][0] !== coords[coords.length-1][0] || coords[0][1] !== coords[coords.length-1][1]) {
-        coords.push(coords[0]);
-    }
-    const polygon = turf.polygon([coords]);
-    const centroid = turf.centroid(polygon);
-    const [lng, lat] = centroid.geometry.coordinates;
-    return [lat, lng];
+// Get label position: manual if provided, otherwise automatic
+let center = null;
+if (block.label_lat && block.label_long) {
+    center = [block.label_lat, block.label_long];
+} else {
+    center = getPolygonCentroid(points);
+}
+if (center) {
+    L.marker(center, {
+        icon: L.divIcon({
+            className: "block-label",
+            html: `<div class="block-label-text">${block.identifier}</div>`,
+            iconSize: [30, 30],
+            iconAnchor: [15, 15]
+        }),
+        interactive: false
+    }).addTo(blockLayer);
 }
 
 // Show/hide loading spinner
@@ -252,7 +255,7 @@ async function loadBlocksOptimized(locationID) {
     // 1. Get blocks
     const { data: blocks, error: blocksError } = await supabase
         .from("block")
-        .select("blockID, identifier")
+        .select("blockID, identifier, label_lat, label_long")   // add these fields
         .eq("locationID", locationID);
     if (blocksError || !blocks?.length) {
         setLoading(false);
@@ -299,7 +302,7 @@ async function loadBlocksOptimized(locationID) {
         pointsByBlock.get(p.blockID).push([p.latitude, p.longitude]);
     }
 
-    // 5. Incrementally render each block (using setTimeout to let UI update)
+    // 5. Incrementally render each block
     let index = 0;
     function renderNextBlock() {
         if (index >= blocks.length) {
@@ -317,7 +320,7 @@ async function loadBlocksOptimized(locationID) {
                 weight: 1.5
             }).addTo(blockLayer);
 
-            // Centroid for label
+            // Improved centroid for label (pointOnFeature + fallback)
             const center = getPolygonCentroid(points);
             if (center) {
                 L.marker(center, {

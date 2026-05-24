@@ -162,8 +162,14 @@ async function assignVariety(e) {
 
   const maxTrees = safeNumber(getEl("varietyTreeCount")?.max);
 
-  if (!blockID || !varietyID || !treeCount) {
-    alert("Please fill in all fields");
+  if (!blockID || !varietyID) {
+    alert("Please select both a block and a variety");
+    return;
+  }
+
+  // Allow zero – just assign the variety without consuming trees
+  if (treeCount < 0) {
+    alert("Tree count cannot be negative");
     return;
   }
 
@@ -172,7 +178,7 @@ async function assignVariety(e) {
     return;
   }
 
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from("block_varieties")
     .insert([
       {
@@ -184,11 +190,13 @@ async function assignVariety(e) {
 
   if (error) {
     console.error(error);
+    alert("Error assigning variety: " + error.message);
     return;
   }
 
-  console.log("Variety assigned:", data);
+  console.log(`Variety assigned with ${treeCount} trees`);
 
+  // Refresh remaining trees display
   updateRemainingTrees();
 }
 
